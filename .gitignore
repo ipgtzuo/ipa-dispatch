@@ -1,0 +1,40 @@
+# ── 签名凭据：绝不入库 ──────────────────────────────────
+# App 内置证书目录含 .p12 私钥与 .mobileprovision，README 已注明
+# App / DMG 都不可外发。按扩展名 + 目录双重排除，防止误提交。
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+*.p8
+*.key
+*.pem
+Resources/ipa-signing/*/
+
+# ── 构建与打包产物（可由 build.sh 复现）─────────────────
+.build/
+dist/
+*.app/
+*.dmg
+*.zip
+*.ipa
+*.dSYM/
+*.xcarchive/
+*.o
+*.swiftmodule/
+
+# ── 历次改版前的本地源码快照 ────────────────────────────
+.backup-*/
+
+# ── 系统 / 编辑器 ──────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+*.swp
+*~
+.idea/
+.vscode/
+
+# ── 本地宣传素材 / 截图（不纳入代码仓库）────────────────
+promo/
+Assets/log-panel.png
