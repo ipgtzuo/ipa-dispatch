@@ -58,12 +58,14 @@ enum DeviceStore {
 
         _ = try? await Shell.capture("/usr/bin/xcrun",
                                      ["devicectl", "list", "devices", "--json-output", url.path])
-        if let data = try? Data(contentsOf: url),
-           let parsed = DeviceState.parseJSON(data), !parsed.isEmpty {
-            return parsed
+        let structured = (try? Data(contentsOf: url)).flatMap(DeviceState.parseJSON)
+        let tableOutput = try? await Shell.capture("/usr/bin/xcrun",
+                                                    ["devicectl", "list", "devices"])
+        let table = tableOutput.map(DeviceState.parseTable) ?? []
+
+        if let structured, !structured.isEmpty {
+            return DeviceState.merge(structured, table)
         }
-        guard let output = try? await Shell.capture("/usr/bin/xcrun",
-                                                    ["devicectl", "list", "devices"]) else { return [] }
-        return DeviceState.parseTable(output)
+        return table
     }
 }

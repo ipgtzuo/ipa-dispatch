@@ -101,6 +101,20 @@ struct DeviceStateTests {
         expect("表格在线 connected", rows.last?.connected ?? false, true)
         expect("表格 UDID", rows.first?.udid ?? "", "00000000-0000000000000001")
 
+        print("merge — JSON 旧状态与表格在线状态合并")
+        let staleJSON = [DeviceStateSnapshot(udid: "00000000-0000000000000001",
+                                             name: "iPhone",
+                                             state: "disconnected",
+                                             connected: false)]
+        let freshTable = [DeviceStateSnapshot(udid: "00000000-0000000000000001",
+                                              name: "iPhone",
+                                              state: "available (paired)",
+                                              connected: true)]
+        let merged = DeviceState.merge(staleJSON, freshTable)
+        expect("合并数量", merged.count, 1)
+        expect("合并后在线", merged.first?.connected ?? false, true)
+        expect("合并后 state", merged.first?.state ?? "", "available (paired)")
+
         print("")
         if failures.isEmpty {
             print("全部 \(total) 项断言通过。")

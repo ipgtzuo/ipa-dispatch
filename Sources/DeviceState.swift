@@ -66,6 +66,27 @@ enum DeviceState {
         return snapshots
     }
 
+    /// 新版 devicectl 的 JSON 有时会残留 `disconnected`，而同一时刻表格
+    /// 已经显示 `available (paired)`。两边任一判断为在线时以在线为准，
+    /// 避免“Finder 看得到、设备详情也是 connected，但 App 仍显示未连接”。
+    static func merge(_ structured: [DeviceStateSnapshot],
+                      _ table: [DeviceStateSnapshot]) -> [DeviceStateSnapshot] {
+        var map = Dictionary(uniqueKeysWithValues: structured.map { ($0.udid, $0) })
+        for item in table {
+            guard let current = map[item.udid] else {
+                map[item.udid] = item
+                continue
+            }
+            if item.connected && !current.connected {
+                map[item.udid] = DeviceStateSnapshot(udid: current.udid,
+                                                      name: current.name,
+                                                      state: item.state,
+                                                      connected: true)
+            }
+        }
+        return Array(map.values)
+    }
+
     /// 解析 `devicectl list devices` 的表格输出，列间为 2+ 空格：
     /// name | UDID (UDID) | state | model | reality
     static func parseTable(_ output: String) -> [DeviceStateSnapshot] {
