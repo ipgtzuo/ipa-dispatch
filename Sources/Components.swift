@@ -363,6 +363,18 @@ struct AddRow: View {
                 Text(model.t("addMore"))
                     .font(.body(11.5, weight: .medium))
                 Spacer()
+                Button {
+                    model.showURLDownload = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "link")
+                        Text(model.t("url.import"))
+                    }
+                    .font(.body(10.5))
+                    .foregroundStyle(p.inkSoft)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isInstalling)
                 Text(model.t("dropHint"))
                     .font(.body(10.5))
                     .foregroundStyle(p.inkFaint)
@@ -373,6 +385,31 @@ struct AddRow: View {
         }
         .buttonStyle(.plain)
         .disabled(model.isInstalling)
+    }
+}
+
+private struct DropActionButtonStyle: ButtonStyle {
+    let primary: Bool
+    @Environment(\.colorScheme) private var scheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        let p = Palette(scheme: scheme)
+        configuration.label
+            .font(.body(12.5, weight: .semibold))
+            .foregroundStyle(primary ? p.chalkOnSignal : p.ink)
+            .frame(width: 236, height: 24)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(primary ? p.signal : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(primary ? Color.clear : p.line, lineWidth: 1)
+                    )
+            )
+            .opacity(configuration.isPressed ? 0.78 : 1)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -403,7 +440,16 @@ struct DropZone: View {
                     Text(model.t("choose"))
                 }
             }
-            .buttonStyle(PrimaryButtonStyle())
+            .buttonStyle(DropActionButtonStyle(primary: true))
+            Button {
+                model.showURLDownload = true
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "link")
+                    Text(model.t("url.import"))
+                }
+            }
+            .buttonStyle(DropActionButtonStyle(primary: false))
             Text(model.t("drop.formats"))
                 .font(.data(9.5))
                 .foregroundStyle(p.inkFaint)
@@ -649,6 +695,88 @@ struct ConsolePanel: View {
     }
 }
 
+struct URLImportSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var url = ""
+    private var p: Palette { Palette(scheme: scheme) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                BrandMark()
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(p.inkSoft)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isDownloadingURL)
+            }
+            .padding(.bottom, 22)
+
+            Text(model.t("url.title"))
+                .font(.display(27))
+                .foregroundStyle(p.ink)
+            Text(model.t("url.desc"))
+                .font(.body(11.5))
+                .foregroundStyle(p.inkSoft)
+                .lineSpacing(2)
+                .padding(.top, 7)
+                .padding(.bottom, 18)
+
+            TextField("https://example.com/app.ipa", text: $url)
+                .textFieldStyle(.plain)
+                .font(.body(13))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(p.paperRaised)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(p.line, lineWidth: 1)
+                        )
+                )
+                .disabled(model.isDownloadingURL)
+
+            if let error = model.urlDownloadError {
+                Text(error)
+                    .font(.body(11))
+                    .foregroundStyle(p.danger)
+                    .padding(.top, 8)
+            }
+
+            if model.isDownloadingURL {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(model.t("url.downloading"))
+                        .font(.body(11))
+                        .foregroundStyle(p.inkSoft)
+                }
+                .padding(.top, 12)
+            }
+
+            HStack {
+                Spacer()
+                Button(model.t("cancel")) { dismiss() }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.isDownloadingURL)
+                Button(model.t("url.download")) { model.startURLDownload(url) }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isDownloadingURL)
+            }
+            .padding(.top, 22)
+        }
+        .padding(28)
+        .frame(width: 520)
+        .background(p.paper)
+        .interactiveDismissDisabled(model.isDownloadingURL)
+    }
+}
+
 struct PasswordSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -712,7 +840,7 @@ struct PasswordSheet: View {
                 Spacer()
                 Button(model.t("cancel")) { dismiss() }
                     .buttonStyle(SecondaryButtonStyle())
-                Button(model.t("install")) { submit() }
+                Button(model.t(model.passwordPurpose == .signOnly ? "sign.only" : "install")) { submit() }
                     .buttonStyle(PrimaryButtonStyle())
             }
             .padding(.top, 22)
@@ -729,6 +857,6 @@ struct PasswordSheet: View {
             return
         }
         dismiss()
-        model.beginInstall(password: password)
+        model.submitPassword(password)
     }
 }

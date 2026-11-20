@@ -58,10 +58,19 @@ enum DeviceState {
                 (connection["state"] as? String) ?? (connection["tunnelState"] as? String),
                 pairingState: connection["pairingState"] as? String
             )
+            let transport = (connection["transportType"] as? String ?? "").lowercased()
+            // The user explicitly wants USB only. A paired Wi-Fi/local-network
+            // device must never look installable, otherwise the signer fails at
+            // install time with a confusing “disconnected” error.
+            let wired = transport == "wired" || transport == "usb"
+            let online = isOnline(state)
+            // Only an explicit USB transport counts. A paired Wi-Fi/local
+            // network device is never installable; a wired device is allowed
+            // even while devicectl's list snapshot is still catching up.
             snapshots.append(DeviceStateSnapshot(udid: udid,
                                                  name: name,
-                                                 state: state,
-                                                 connected: isOnline(state)))
+                                                 state: online && !wired ? "network" : state,
+                                                 connected: wired))
         }
         return snapshots
     }

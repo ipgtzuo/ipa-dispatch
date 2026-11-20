@@ -25,6 +25,13 @@ final class AppModel: ObservableObject {
     @Published var status: LocalizedMessage
     @Published var currentIndex: Int?
     @Published var isDropTargeted = false
+    @Published var passwordPurpose: PasswordPurpose = .install
+    @Published var signOnlyOutputDir: URL?
+    @Published var showURLDownload = false
+    @Published var isDownloadingURL = false
+    @Published var urlDownloadError: String?
+
+    enum PasswordPurpose { case install, signOnly }
 
     private var installTask: Task<Void, Never>?
 
@@ -69,6 +76,17 @@ final class AppModel: ObservableObject {
         return certificates.filter { !$0.supports(device.udid) }
     }
 
+    var orderedCertificates: [CertificateRecord] {
+        let rank = Dictionary(uniqueKeysWithValues: devices.enumerated().map { ($1.udid, $0) })
+        return certificates.sorted { a, b in
+            let ar = a.provisionedDevices.compactMap { rank[$0] }.min() ?? Int.max
+            let br = b.provisionedDevices.compactMap { rank[$0] }.min() ?? Int.max
+            if ar != br { return ar < br }
+            if a.isBuiltIn != b.isBuiltIn { return !a.isBuiltIn }
+            return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
+        }
+    }
+
     var isReading: Bool { items.contains { $0.status == .reading } }
 
     var totalSize: Int64 { items.reduce(0) { $0 + $1.size } }
@@ -83,6 +101,17 @@ final class AppModel: ObservableObject {
             && (selectedDevice.map { device in
                 selectedCertificate.map { $0.supports(device.udid) } ?? false
             } ?? false)
+    }
+
+    var canSignOnly: Bool {
+        !isInstalling
+            && !items.isEmpty
+            && !isReading
+            && !items.contains { $0.bundleID.isEmpty }
+            && (selectedCertificate?.valid ?? false)
+            && (selectedDevice.map { device in
+                selectedCertificate.map { $0.supports(device.udid) } ?? false
+            } ?? true)
     }
 
     var installButtonTitle: String {
@@ -101,8 +130,8 @@ final class AppModel: ObservableObject {
 
     var deviceStateLabel: String {
         guard let device = selectedDevice else { return t("device.none") }
+        if device.state.lowercased() == "network" { return t("device.network") }
         if !device.connected { return t("device.notConnected") }
-        if device.state.lowercased().contains("paired") { return t("device.pairedLocal") }
         return t("device.connected")
     }
 
@@ -274,6 +303,85 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func startURLDownload(_ raw: String) {
+        guard !isInstalling, !isDownloadingURL else { return }
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.lowercased().hasPrefix("http://") && !text.lowercased().hasPrefix("https://") {
+            text = "https://" + text
+        }
+        guard let url = URL(string: text),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host != nil else {
+            urlDownloadError = t("error.url")
+            return
+        }
+        let name = url.lastPathComponent.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard name.lowercased().hasSuffix(".ipa"), !name.isEmpty else {
+            urlDownloadError = t("error.url")
+            return
+        }
+        let downloads = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads/IPA Dispatch Downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        var dest = downloads.appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: dest.path) {
+            let base = dest.deletingPathExtension().lastPathComponent
+            dest = downloads.appendingPathComponent("\(base)-\(Int(Date().timeIntervalSince1970)).ipa")
+        }
+        urlDownloadError = nil
+        isDownloadingURL = true
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let code = try await ProcessRunner.run(
+                    executable: "/usr/bin/curl",
+                    arguments: ["--fail", "--location", "--retry", "2", "--connect-timeout", "30", "--silent", "--show-error", "--output", dest.path, url.absoluteString],
+                    environment: ProcessInfo.processInfo.environment
+                ) { [weak self] line, isError in
+                    DispatchQueue.main.async {
+                        guard let self, !line.isEmpty else { return }
+                        self.append(.init(text: line, isError: isError), itemID: nil)
+                    }
+                }
+                await MainActor.run {
+                    self.isDownloadingURL = false
+                    guard code == 0, FileManager.default.fileExists(atPath: dest.path) else {
+                        self.urlDownloadError = self.t("error.download")
+                        return
+                    }
+                    self.showURLDownload = false
+                    self.add([dest])
+                    self.status = LocalizedMessage("status.reading")
+                }
+            } catch {
+                await MainActor.run {
+                    self.isDownloadingURL = false
+                    self.urlDownloadError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func chooseICloudFiles() {
+        guard !isInstalling else { return }
+        let panel = NSOpenPanel()
+        panel.title = t("icloud.import")
+        panel.prompt = t("common.add")
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "ipa") ?? .data]
+        let drive = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
+        if FileManager.default.fileExists(atPath: drive.path) {
+            panel.directoryURL = drive
+        }
+        if panel.runModal() == .OK {
+            add(panel.urls)
+        }
+    }
+
     func add(_ urls: [URL]) {
         guard !isInstalling else { return }
         let existing = Set(items.map { $0.url.standardizedFileURL.path })
@@ -349,12 +457,236 @@ final class AppModel: ObservableObject {
             error = LocalizedMessage("error.noPackages")
             return
         }
+        if let insufficient = insufficientDiskMessage() {
+            error = LocalizedMessage("error.disk", insufficient)
+            return
+        }
         guard !isReading, !items.contains(where: { $0.bundleID.isEmpty }) else {
             error = LocalizedMessage("error.reading")
             return
         }
         error = nil
+        passwordPurpose = .install
         showPassword = true
+    }
+
+    func requestSignOnly() {
+        guard !isInstalling else { return }
+        guard let cert = selectedCertificate, cert.valid else {
+            error = LocalizedMessage(certificates.isEmpty ? "error.profile" : "error.incompatible")
+            return
+        }
+        if let device = selectedDevice, !cert.supports(device.udid) {
+            error = LocalizedMessage("error.incompatible")
+            return
+        }
+        guard !items.isEmpty else {
+            error = LocalizedMessage("error.noPackages")
+            return
+        }
+        guard !isReading, !items.contains(where: { $0.bundleID.isEmpty }) else {
+            error = LocalizedMessage("error.reading")
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.title = t("sign.chooseOutput")
+        panel.prompt = t("common.done")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+        guard panel.runModal() == .OK, let dir = panel.url else { return }
+        signOnlyOutputDir = dir
+        error = nil
+        passwordPurpose = .signOnly
+        showPassword = true
+    }
+
+    func chooseSignedIPAFiles() {
+        guard !isInstalling else { return }
+        guard let device = selectedDevice, device.connected else {
+            error = LocalizedMessage("error.device")
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.title = t("install.signed")
+        panel.prompt = t("install")
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "ipa") ?? .data]
+        guard panel.runModal() == .OK else { return }
+        let urls = panel.urls
+        guard !urls.isEmpty else { return }
+        Task { [weak self] in
+            await self?.runInstallSigned(urls: urls, device: device)
+        }
+    }
+
+    func submitPassword(_ password: String) {
+        switch passwordPurpose {
+        case .install:
+            beginInstall(password: password)
+        case .signOnly:
+            beginSignOnly(password: password)
+        }
+    }
+
+    private func beginSignOnly(password: String) {
+        let trimmed = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            error = LocalizedMessage("error.password")
+            return
+        }
+        guard !isInstalling, let dir = signOnlyOutputDir else { return }
+        showPassword = false
+        error = nil
+        installTask = Task { [weak self] in
+            await self?.runSignOnly(password: trimmed, outputDir: dir)
+        }
+    }
+
+    private func runSignOnly(password: String, outputDir: URL) async {
+        let targets = items
+        guard let cert = selectedCertificate, !targets.isEmpty else { return }
+        isInstalling = true
+        showLog = true
+        log.removeAll()
+        itemLogs.removeAll()
+        progress = 0
+        currentIndex = nil
+        status = LocalizedMessage("status.preparing")
+
+        var env = ProcessInfo.processInfo.environment
+        let basePath = "/usr/bin:/bin:/usr/sbin:/sbin"
+        env["PATH"] = (env["PATH"].map { "\(basePath):\($0)" }) ?? basePath
+        env["P12_PASSWORD"] = password
+
+        if let device = selectedDevice, !cert.supports(device.udid) {
+            error = LocalizedMessage("error.incompatible")
+            isInstalling = false
+            return
+        }
+        let udid = selectedDevice?.udid
+            ?? cert.provisionedDevices.first
+            ?? "00000000-0000000000000000"
+        var failed = 0
+
+        for (index, item) in targets.enumerated() {
+            guard index < items.count else { continue }
+            currentIndex = index
+            items[index].status = .running
+            items[index].message = nil
+            itemLogs[item.id] = []
+            status = LocalizedMessage("status.signingPackage", item.name)
+            progress = Double(index) / Double(targets.count)
+            append(.init(text: "── sign only \(index + 1)/\(targets.count)  \(item.url.lastPathComponent)", isError: false), itemID: item.id)
+
+            let base = item.url.deletingPathExtension().lastPathComponent
+            let out = outputDir.appendingPathComponent("\(base)-signed.ipa")
+            let arguments = [
+                AppPaths.signer.path,
+                "-i", item.url.path,
+                "-c", cert.p12URL.path,
+                "-m", cert.profileURL.path,
+                "-u", udid,
+                "-o", out.path,
+                "--no-install",
+                "--cleanup"
+            ]
+
+            var exitCode: Int32 = 1
+            do {
+                exitCode = try await ProcessRunner.run(
+                    executable: "/bin/zsh",
+                    arguments: arguments,
+                    environment: env
+                ) { [weak self] line, isError in
+                    DispatchQueue.main.async {
+                        self?.append(.init(text: line, isError: isError), itemID: item.id)
+                    }
+                }
+            } catch {
+                append(.init(text: "Failed to launch signer: \(error.localizedDescription)", isError: true), itemID: item.id)
+            }
+
+            if exitCode == 0 {
+                items[index].status = .done
+                items[index].message = out.path
+                status = LocalizedMessage("status.signed", out.lastPathComponent)
+            } else {
+                failed += 1
+                items[index].status = .failed
+                items[index].message = t("status.failed", String(exitCode))
+                status = LocalizedMessage("status.failed", String(exitCode))
+            }
+            progress = Double(index + 1) / Double(targets.count)
+        }
+
+        currentIndex = nil
+        isInstalling = false
+        if failed == 0 {
+            status = LocalizedMessage("status.allSigned", String(targets.count))
+            progress = 1
+        } else {
+            status = LocalizedMessage("status.finishedFailed", String(failed))
+        }
+    }
+
+    private func runInstallSigned(urls: [URL], device: DeviceRecord) async {
+        isInstalling = true
+        showLog = true
+        log.removeAll()
+        itemLogs.removeAll()
+        progress = 0
+        status = LocalizedMessage("status.preparing")
+
+        var env = ProcessInfo.processInfo.environment
+        let basePath = "/usr/bin:/bin:/usr/sbin:/sbin"
+        env["PATH"] = (env["PATH"].map { "\(basePath):\($0)" }) ?? basePath
+        var failed = 0
+
+        for (index, url) in urls.enumerated() {
+            currentIndex = index
+            status = LocalizedMessage("status.installingPackage", url.lastPathComponent)
+            progress = Double(index) / Double(urls.count)
+            append(.init(text: "── install signed \(index + 1)/\(urls.count)  \(url.lastPathComponent)", isError: false), itemID: nil)
+            var code: Int32 = 1
+            do {
+                code = try await ProcessRunner.run(
+                    executable: "/usr/bin/xcrun",
+                    arguments: ["devicectl", "device", "install", "app", "--device", device.udid, url.path],
+                    environment: env
+                ) { [weak self] line, isError in
+                    DispatchQueue.main.async { self?.append(.init(text: line, isError: isError), itemID: nil) }
+                }
+            } catch {
+                append(.init(text: "Failed to launch devicectl: \(error.localizedDescription)", isError: true), itemID: nil)
+            }
+            if code != 0 { failed += 1 }
+            progress = Double(index + 1) / Double(urls.count)
+        }
+        currentIndex = nil
+        isInstalling = false
+        status = failed == 0
+            ? LocalizedMessage("status.installed")
+            : LocalizedMessage("status.finishedFailed", String(failed))
+    }
+
+    private func insufficientDiskMessage() -> String? {
+        let needed = items.reduce(Int64(0)) { $0 + max($1.size, 0) }
+        guard needed > 0 else { return nil }
+        let volume = (items.first?.url ?? URL(fileURLWithPath: "/"))
+        guard let free = try? volume.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage else { return nil }
+        // Extraction + signed IPA + install cache: reserve two times the source.
+        let required = needed * 2
+        guard free < required else { return nil }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useGB, .useMB]
+        return "\(formatter.string(fromByteCount: needed)) source, \(formatter.string(fromByteCount: free)) free; \(formatter.string(fromByteCount: required)) required"
     }
 
     func beginInstall(password: String) {

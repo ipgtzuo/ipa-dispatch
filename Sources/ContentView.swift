@@ -43,6 +43,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.showImportCertificate) {
             ImportCertificateSheet().environmentObject(model)
         }
+        .sheet(isPresented: $model.showURLDownload) {
+            URLImportSheet().environmentObject(model)
+        }
     }
 }
 
@@ -84,6 +87,7 @@ private struct TopBar: View {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11, weight: .medium))
                 }
+
             }
         }
         .padding(.leading, 78)
@@ -140,14 +144,16 @@ private struct TargetSidebar: View {
                     .foregroundStyle(p.ink)
                 Spacer()
                 Button {
-                    model.openImportCertificate()
+                    model.openCertificateManager()
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: "gearshape")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(p.inkFaint)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(model.t("cert.import"))
+                .help(model.t("sidebar.manage"))
             }
             .padding(.bottom, 7)
 
@@ -159,7 +165,7 @@ private struct TargetSidebar: View {
             } else {
                 ScrollView {
                     VStack(spacing: 2) {
-                        ForEach(model.certificates) { cert in
+                        ForEach(model.orderedCertificates) { cert in
                             CertificateSidebarRow(cert: cert)
                         }
                     }
@@ -173,34 +179,8 @@ private struct TargetSidebar: View {
 
             // 侧栏内容整体顶部成组；内容不足时留白自然落在底部。
             ReadinessCard()
-                .padding(.top, 18)
+                .padding(.top, 14)
                 .padding(.bottom, 10)
-
-            Button {
-                model.openCertificateManager()
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "checkmark.seal")
-                        .font(.system(size: 11, weight: .medium))
-                    Text(model.t("sidebar.manage"))
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
-                }
-                .font(.body(11, weight: .medium))
-                .foregroundStyle(p.inkSoft)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(p.card)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(p.line, lineWidth: 1)
-                        )
-                )
-            }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.top, 16)
@@ -305,6 +285,8 @@ private struct DeviceSidebarRow: View {
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(selected ? p.paperRaised : Color.clear)
@@ -363,6 +345,8 @@ private struct CertificateSidebarRow: View {
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(selected ? p.paperRaised : Color.clear)
@@ -808,6 +792,28 @@ private struct BottomBar: View {
             }
 
             Spacer()
+
+            Button {
+                model.requestSignOnly()
+            } label: {
+                Label(model.t("sign.only"), systemImage: "signature")
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(!model.canSignOnly)
+            .help(model.canSignOnly ? model.t("sign.only.help") : model.t("error.profile"))
+
+            Button {
+                model.chooseSignedIPAFiles()
+            } label: {
+                Label(model.t("install.signed"), systemImage: "square.and.arrow.down")
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(model.isInstalling || !(model.selectedDevice?.connected ?? false))
+            .help(model.selectedDevice?.connected == true ? model.t("install.signed") : model.t("device.notConnected"))
 
             if !model.items.isEmpty && !model.isInstalling {
                 Button(model.t("clear")) { model.clear() }

@@ -1,74 +1,81 @@
 # IPA Dispatch
 
-`一键安装IPA.command` 的 macOS 图形版。支持中英文、多个 IPA、多个设备、多张证书，并可按描述文件自动匹配设备。
+一个 macOS 桌面工具，用来给自己的或已获授权的 IPA 做本地签名、批量签名，并安装到已连接的 iPhone / iPad。
 
 ## 功能
 
-- 拖入/多选多个 IPA，按列表顺序安装
-- 中英文界面切换（右上角「中 / EN」）
-- 左侧设备/证书栏，多设备、多证书一目了然
-- 多设备：从顶部设备菜单选择目标 iPhone
-- 多证书：导入 `.p12` + `.mobileprovision`，在证书管理器中切换
-- 证书与设备自动关联：从描述文件的 `ProvisionedDevices` 读取设备，只允许选择兼容的证书
-- 冲突 bundle ID 自动安装为 `.sideload1/2/...` 副本
-- p12 密码每次安装时输入，不写入磁盘
-- 每个 IPA 内置可展开/折叠的日志，失败自动展开，支持复制
-- 逐项状态、失败不中断后续 IPA
-- 内置一份证书作为初始默认，可继续导入自己的证书
+- 拖入或多选 IPA，按列表顺序逐个处理
+- 大文件/超大 IPA 采用流式检查与解压，不把整个文件读进内存；安装前检查可用磁盘空间
+- 从 URL 下载 IPA 后直接加入清单
+- 中英文界面切换
+- 左侧设备/证书栏：设备顺序与证书顺序保持一致，整行可点击
+- 多设备、多证书；证书按描述文件的 `ProvisionedDevices` 与设备自动匹配，不兼容的证书灰显
+- 齿轮进入证书管理：导入 `.p12` + `.mobileprovision`，或删除已有证书
+- 两种工作流：
+  - **安装 IPA**：签名后直接安装到当前连接的设备
+  - **仅签名**：只导出已签名 IPA，不要求连接设备；支持一次选择多个 IPA
+- **安装已签名**：选择一个或多个已签名 IPA，安装到当前连接的设备
+- 每个 IPA 都有可展开/折叠的独立日志，失败自动展开，支持一键复制
+- 批量任务失败不会中断后续 IPA
+- bundle ID 冲突时自动安装为 `.sideload1/2/...` 副本
+- p12 密码只在本次运行的内存中使用，不写入磁盘
 
 ## 使用
 
-1. 打开 `dist/IPA-Dispatch.dmg`，把 `IPA Dispatch.app` 拖到 Applications。
-2. 连接 iPhone，解锁并信任这台 Mac。
-3. 左侧「设备」列表选择目标 iPhone。
-4. 左侧「证书」列表选择兼容证书，或点右侧「+」导入证书。
-5. 拖入 IPA，点安装，输入 p12 密码。
+1. 打开 `dist/IPA-Dispatch.dmg`，把 `IPA Dispatch.app` 拖到 Applications
+2. 连接 iPhone/iPad，解锁并信任这台 Mac
+3. 左侧设备栏选择目标设备
+4. 点证书栏的齿轮，导入自己的 `.p12` + `.mobileprovision`，选择兼容证书
+5. 拖入 IPA，或点「选择 IPA 文件」/「从 URL 下载」
+6. 点「安装 IPA」；如果只需要签名，点「仅签名」并选择导出目录
+7. 安装已签名 IPA 时，点「安装已签名」选择文件
+
+### 仅签名 / 安装已签名
+
+- **仅签名**：选择输出目录后，为清单中的每个 IPA 生成 `*-signed.ipa`；没有连接设备也可以操作
+- **安装已签名**：要求当前设备已连接；可一次选择多个 `.ipa`，按顺序安装
 
 ### 导入证书
 
-在证书菜单或证书管理器里选择：
+在证书管理页选择：
 
 - `.p12` 证书文件
-- 对应的 `.mobileprovision` 描述文件
+- 匹配的 `.mobileprovision`
 - 显示名称
-- p12 密码（仅用于本次验证，不保存）
+- p12 密码（只用于验证和本次安装）
 
-导入时会验证：
-
-- p12 密码和私钥是否可用
-- 描述文件是否过期
-- 描述文件包含哪些设备
-- 证书与描述文件的团队/App ID
-
-证书会复制到：
+导入时会检查密码/私钥、描述文件有效期、团队/App ID 和设备列表。证书文件复制到：
 
 ```text
 ~/Library/Application Support/IPA Dispatch/Certificates/
 ```
 
-## 多设备 / 多证书
+## 设备连接
 
-- 设备列表来自 `xcrun devicectl list devices --json-output`，按 `properties.connection.state` 判断是否在线（只认 `available` / `connected`，`unavailable` 不算已连接），只收录 `physical` 真机；`--json-output` 不可用时回退到表格输出的状态列。同时保留曾连接过的设备，离线时显示为「未连接」。
-- 证书按描述文件的 `ProvisionedDevices` 关联设备。
-- 选择设备后，证书菜单只允许选择包含该设备的证书。
-- 选择某张证书时，如果当前设备不在它的描述文件中，会自动切换到该证书支持的设备。
+App 通过 `xcrun devicectl` 读取设备。安装和「安装已签名」只对已连接设备开放；「仅签名」不要求设备在线。
 
-## 注意
+如果 Finder 能看到设备但 App 显示未连接，先确认：
 
-- App 内置了一份初始证书；App 内部和 Application Support 都包含 p12，请勿把 App/DMG 发给别人。
-- 描述文件有效期以实际证书为准；共享证书可能提前吊销。
-- 当前是本地 ad-hoc 签名，未做 Apple 公证；如果 Gatekeeper 拦截，右键 App → 打开。
-- 换手机/换证书不需要重新打包 App，直接在界面导入/选择。
-- 6.8 GB 游戏建议 USB-C 连接安装。
+- 使用 USB 数据线，而不是只供电的线
+- 设备已解锁，并点了「信任此电脑」
+- 设备已开启开发者模式
+- `xcrun devicectl device info details --device <UDID>` 显示 `Device State: connected`
 
-## 重新构建
+Wi-Fi 连接可以用于识别设备，但大文件安装建议使用 USB。
+
+## 构建
 
 ```bash
 cd ipa-dispatch
 ./build.sh
 ```
 
-要求：Xcode / Swift 6 toolchain、macOS 14+。
+要求：Xcode / Swift 6 toolchain、macOS 14+。构建脚本会在本地临时目录编译、ad-hoc 签名并生成：
+
+```text
+dist/IPA-Dispatch.dmg
+dist/IPA-Dispatch.zip
+```
 
 ### 运行测试
 
@@ -76,34 +83,23 @@ cd ipa-dispatch
 ./run-tests.sh
 ```
 
-只编译设备状态的纯逻辑层（`Sources/DeviceState.swift`）与 `Tests/DeviceStateTests.swift`，不需要连接 iPhone，覆盖：
+只编译设备状态的纯逻辑层和测试，不需要连接设备。
 
-- 在线白名单 `available` / `connected`，以及 `unavailable` / `disconnected` 这两个子串陷阱
-- 新旧两代 `devicectl --json-output` 字段（`properties.*` 与 deprecated 字典）
-- 表格输出回退解析、表头/分隔线/模拟器过滤
-- 缺失状态与配对语义的归一化
+## 签名凭据 / 隐私
 
-## 版本控制 / 从仓库构建
+- **本仓库不包含任何 `.p12`、`.mobileprovision`、设备 UDID 或证书团队信息**
+- 需要签名时请放入自己的证书，或通过 App 的证书管理导入
+- 本地证书目录被 `.gitignore` 排除；不要把 `Resources/ipa-signing/` 下的私钥提交或外发
+- App 使用本地 ad-hoc 签名，未做 Apple 公证；Gatekeeper 拦截时右键 App → 打开
+- 请只用于自己拥有或已获授权的 IPA
 
-本目录是独立的 Git 仓库（默认分支 `main`）。以下内容**故意不入库**：
+## 目录
 
-| 路径 | 原因 |
-| --- | --- |
-| `Resources/ipa-signing/bundled/` | 本地内置签名凭据，绝不提交或外发 |
-| `dist/`、`*.dmg`、`*.zip` | 打包产物，可由 `./build.sh` 复现 |
-| `.build/` | SwiftPM 构建缓存与 dSYM |
-| `.backup-*/` | 历次改版前的本地源码快照 |
-
-从仓库 clone 后首次构建：
-
-```bash
-mkdir -p "Resources/ipa-signing/bundled"
-# 可选：把自己的 cert.p12 + profile.mobileprovision 放进去
-./build.sh
+```text
+Sources/                 SwiftUI App
+Resources/sign-ios-ipa.sh  签名/安装脚本
+Tests/DeviceStateTests.swift
+docs/IPA-Dispatch-UI预览.html
+build.sh
+run-tests.sh
 ```
-
-不放证书也能构建，App 会正常启动，只是没有内置默认证书，需要在界面里导入。公开的 CA 证书 `Resources/ipa-signing/AppleWWDRCAG3.cer` 已入库。
-
-`docs/IPA-Dispatch-UI预览.html` 是 UI 预览的唯一版本控制源；会话工作区的同名文件是指向它的软链接，改一处即可。
-
-> 项目位于 `~/Documents`，可能受 iCloud 同步影响。若 `.git` 出现同步冲突，建议把仓库移到非 iCloud 目录，或对该目录关闭 iCloud 同步。

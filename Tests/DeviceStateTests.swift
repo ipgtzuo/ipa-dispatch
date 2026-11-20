@@ -50,7 +50,7 @@ struct DeviceStateTests {
             ]],
             ["properties": [
                 "hardware": ["udid": "00008120-001A2B3C4D5E6F70", "reality": "physical"],
-                "connection": ["state": "available", "pairingState": "paired"],
+                "connection": ["state": "available", "pairingState": "paired", "transportType": "wired"],
                 "state": ["name": "My iPhone"]
             ]],
             ["properties": [
@@ -71,7 +71,7 @@ struct DeviceStateTests {
         let legacy: [String: Any] = ["result": ["devices": [
             ["hardwareProperties": ["udid": "00008120-001A2B3C4D5E6F70", "reality": "physical"],
              "deviceProperties": ["name": "Legacy iPhone"],
-             "connectionProperties": ["tunnelState": "connected"]]
+             "connectionProperties": ["tunnelState": "connected", "transportType": "wired"]]
         ]]]
         let legacyData = try! JSONSerialization.data(withJSONObject: legacy)
         let legacyRows = DeviceState.parseJSON(legacyData)

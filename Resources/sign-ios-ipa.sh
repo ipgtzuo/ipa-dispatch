@@ -418,12 +418,30 @@ for dev in data.get("result", {}).get("devices", []):
     if udid != want or str(hw.get("reality", "")).lower() != "physical":
         continue
     state = str(conn.get("state") or conn.get("tunnelState") or "disconnected").lower()
-    print("connected" if state.startswith(("available", "connected")) else state)
+    transport = str(conn.get("transportType") or "").lower()
+    if state.startswith(("available", "connected")):
+        print("connected" if transport in ("", "wired", "usb") else "network")
+    else:
+        print(state)
     raise SystemExit
 print("missing")
 PY
 )" || DEVICE_STATUS="unknown"
   rm -f "$DEVICE_JSON"
+
+  # devicectl list can briefly return a cached "disconnected" immediately
+  # after USB/trust/Developer Mode becomes ready. Probe live details and wait.
+  if [[ "$DEVICE_STATUS" != connected && "$DEVICE_STATUS" != available* ]]; then
+    for _ in 1 2 3 4 5; do
+      /bin/sleep 1
+      DEVICE_DETAILS=$(/usr/bin/xcrun devicectl device info details --device "$UDID" 2>&1 || true)
+      if print -r -- "$DEVICE_DETAILS" | /usr/bin/grep -q "Device State: connected" &&
+         print -r -- "$DEVICE_DETAILS" | /usr/bin/grep -q "Transport Type: wired"; then
+        DEVICE_STATUS="connected"
+        break
+      fi
+    done
+  fi
 
   # Fall back to the table's State column when --json-output is unavailable.
   if [[ "$DEVICE_STATUS" == "unknown" ]]; then
@@ -435,7 +453,13 @@ PY
   fi
 
   case "$DEVICE_STATUS" in
-    connected|available*) ;;
+    connected) ;;
+    available*)
+      die "device $UDID is only paired; connect a USB data cable, unlock it, and trust this Mac."
+      ;;
+    network)
+      die "device $UDID is connected over Wi-Fi/local network. This app uses USB only; connect a USB data cable and disable network pairing for installation."
+      ;;
     missing)
       print -u2 -- "$DEVICES"
       die "device $UDID was not found by devicectl. Connect by USB, unlock it, trust this Mac, and enable Developer Mode."

@@ -3,8 +3,14 @@ import Foundation
 enum IPAInspector {
     static func inspect(_ url: URL, id: UUID? = nil) async -> IPAItem {
         var item = IPAItem(id: id ?? UUID(), url: url)
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         do {
-            let listing = try await Shell.capture("/usr/bin/unzip", ["-Z1", url.path])
+            let localURL = try await ICloudFile.ensureAvailable(url)
+            if let size = (try? localURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                item.size = Int64(size)
+            }
+            let listing = try await Shell.capture("/usr/bin/unzip", ["-Z1", localURL.path])
             let lines = listing.split(separator: "\n").map(String.init)
             guard let infoPath = lines.first(where: { line in
                 let parts = line.split(separator: "/")
@@ -17,7 +23,7 @@ enum IPAInspector {
                 item.message = "No Payload/*.app/Info.plist found."
                 return item
             }
-            let data = try await Shell.captureData("/usr/bin/unzip", ["-p", url.path, infoPath])
+            let data = try await Shell.captureData("/usr/bin/unzip", ["-p", localURL.path, infoPath])
             guard let plist = try PropertyListSerialization.propertyList(
                 from: data,
                 options: [],
